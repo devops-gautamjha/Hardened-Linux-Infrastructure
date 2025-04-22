@@ -1,5 +1,6 @@
 ---
 # defaults file for oslock
 NEW_USER: "oslock"
+USER_PASSWORD: "P@ssw0rd"
 NEW_SSH_PORT: 6500
 

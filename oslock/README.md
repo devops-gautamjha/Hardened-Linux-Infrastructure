@@ -1,38 +1,60 @@
-Role Name
-=========
+oslock
+=======
 
-A brief description of the role goes here.
+An Ansible role to perform system hardening on Debian/Ubuntu servers, including user creation, SSH hardening, Fail2ban and auditd setup, kernel network hardening, and firewall configuration.
 
 Requirements
 ------------
 
-Any pre-requisites that may not be covered by Ansible itself or the role should be mentioned here. For instance, if the role uses the EC2 module, it may be a good idea to mention in this section that the boto package is required.
+- Control node: Ansible 2.9+
+- Managed nodes: Debian or Ubuntu-based systems
+- Python installed on managed nodes (provided by default on most distros)
 
 Role Variables
 --------------
 
-A description of the settable variables for this role should go here, including any variables that are in defaults/main.yml, vars/main.yml, and any variables that can/should be set via parameters to the role. Any variables that are read from other roles and/or the global scope (ie. hostvars, group vars, etc.) should be mentioned here as well.
+The following variables are defined in `defaults/main.yml` and can be overridden:
+
+```yaml
+# defaults/main.yml
+NEW_USER: "oslock"         # Name of the user to create
+USER_PASSWORD: "P@ssw0rd"  # Initial password (will be hashed)
+NEW_SSH_PORT: 6500          # SSH daemon port for key-based login
+```
+
+**Mandatory variable** (must be provided by the caller):
+
+```yaml
+SSH_PUBLIC_KEY: "<your-public-ssh-key>"  # User's SSH public key to install
+```
 
 Dependencies
 ------------
 
-A list of other roles hosted on Galaxy should go here, plus any details in regards to parameters that may need to be set for other roles, or variables that are used from other roles.
+This role has no external Ansible role dependencies.
 
 Example Playbook
 ----------------
 
-Including an example of how to use your role (for instance, with variables passed in as parameters) is always nice for users too:
-
-    - hosts: servers
-      roles:
-         - { role: username.rolename, x: 42 }
+```yaml
+- hosts: all
+  become: true
+  roles:
+    - role: oslock
+      SSH_PUBLIC_KEY: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+      # Optional overrides:
+      NEW_USER: "deploy"
+      USER_PASSWORD: "Str0ngP@ss!"
+      NEW_SSH_PORT: 6500
+```
 
 License
 -------
 
-BSD
+MIT
 
 Author Information
 ------------------
 
-An optional section for the role authors to include contact information, or a website (HTML is not allowed).
+Developed by Gautam Jha
+

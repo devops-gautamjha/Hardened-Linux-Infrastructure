@@ -1,29 +1,51 @@
 ---
 # tasks file for oslock
 
-- name: Ensure Required Variable is provided by user
+- name: 🔐 Ensuring SSH key is provided
   assert:
     that: 
       - SSH_PUBLIC_KEY is defined
       - SSH_PUBLIC_KEY != ''
-    fail_msg: "You must provide your public SSH key so that you can log in to the server after hardening."
+    fail_msg: "❌ You must provide your public SSH key to avoid being locked out."
 
-- name: Updating apt packages 
-  apt: "*"
-  state: latest
+- name: 🧰 Updating all APT packages
+  apt: 
+    name: "*"
+    state: latest
 
-- name: Upgrading the dist 
+- name: 🔄 Performing full system upgrade (dist-upgrade)
   apt: 
     upgrade: dist
+    update_cache: yes
 
+- name: 📦 Installing unattended-upgrades package
+  apt: 
+    name: unattended-upgrades
+    state: present
+    update_cache: yes 
 
-- name: Creating New User
+- name: ⚙️ Enabling unattended-upgrades service
+  systemd:
+    name: unattended-upgrades
+    enabled: yes
+    state: started
+
+- name: 👤 Creating new user account
   user: 
-    name: {{ NEW_USER }}
+    name: "{{ NEW_USER }}"
+    password: "{{ USER_PASSWORD | password_hash('sha512') }}"
     create_home: yes
     shell: /bin/bash
 
-- name: Creating SSH directory if doesn't exist and giving it right permission
+- name: 🧑‍💻 Granting sudo access without password for user
+  copy:
+    dest: "/etc/sudoers.d/{{ NEW_USER }}"
+    content: "{{ NEW_USER }} ALL=(ALL) NOPASSWD:ALL"
+    owner: root
+    group: root
+    mode: '0440'
+
+- name: 🛠️ Creating .ssh directory with secure permissions
   file: 
     path: /home/{{ NEW_USER }}/.ssh
     state: directory
@@ -31,25 +53,23 @@
     owner: "{{ NEW_USER }}"
     group: "{{ NEW_USER }}"
 
-- name: Adding Public SSH key in authorized key file
+- name: 🔑 Adding public SSH key to authorized_keys
   template: 
     src: authorized_keys.j2
     dest: /home/{{ NEW_USER }}/.ssh/authorized_keys
-    group: {{ NEW_USER }}
-    owner: {{ NEW_USER }}
+    group: "{{ NEW_USER }}"
+    owner: "{{ NEW_USER }}"
     mode: '0600'
 
-- name: Removing Every other configs that can override default sshd config 
-  file: 
-    path: 
-      - "/etc/ssh/sshd_config.d/"
-      - "/etc/ssh/ssh_config.d/"
+- name: 🧹 Removing override SSH config files
+  file:
+    path: "{{ item }}"
     state: absent
   with_fileglob:
     - "/etc/ssh/sshd_config.d/*"
     - "/etc/ssh/ssh_config.d/*"
 
-- name: Creating Sshd Config 
+- name: 🧾 Applying new SSH daemon configuration
   template: 
     src: sshd_config.j2
     dest: /etc/ssh/sshd_config
@@ -57,24 +77,111 @@
     owner: root 
     mode: '0644'
 
+- name: 🛡 Installing Fail2ban
+  apt: 
+    name: fail2ban
+    state: present
+    update_cache: true
 
-- name: Installing UFW firewall 
+- name: ⚙️ Configuring Fail2ban with jail.local
+  template: 
+    src: fail2ban-jail.local.j2
+    dest: /etc/fail2ban/jail.local
+
+- name: ▶️ Enabling and starting Fail2ban service
+  systemd:
+    name: fail2ban
+    state: started
+    enabled: true
+
+- name: 🧩 Installing auditd and audispd-plugins
+  apt: 
+    name: 
+      - auditd
+      - audispd-plugins
+    state: present
+    update_cache: true 
+
+- name: ▶️ Enabling and starting auditd service
+  systemd: 
+    name: auditd
+    enabled: true 
+    state: started
+
+- name: 📋 Creating custom audit rules file
+  copy:
+    dest: /etc/audit/rules.d/hardening.rules
+    content: |
+      -w /etc/passwd -p wa -k passwd_changes
+      -w /etc/sudoers -p wa -k sudoers_mod
+      -a always,exit -F arch=b64 -S execve -k exec_log
+    owner: root
+    group: root
+    mode: '0640'
+
+- name: 🔁 Reloading audit rules using augenrules
+  command: augenrules --load
+
+- name: 🔄 Restarting auditd to apply rules
+  systemd:
+    name: auditd
+    state: restarted
+
+- name: 🧱 Applying kernel network hardening (sysctl)
+  blockinfile:
+    path: /etc/sysctl.conf
+    block: |
+      # Security Hardening - Network Layer
+      net.ipv4.tcp_syncookies=1
+      net.ipv4.conf.all.rp_filter=1
+      net.ipv4.conf.default.rp_filter=1
+      net.ipv4.icmp_echo_ignore_broadcasts=1
+      net.ipv4.conf.all.accept_source_route=0
+
+- name: 🔄 Applying sysctl configuration
+  command: sysctl -p
+
+- name: 🔥 Installing UFW firewall
   apt:
     name: ufw
     state: present
     update_cache: yes
 
-- name: Deny incomming request on all ports 
+- name: 🚫 Setting default policy to deny all incoming traffic
   ufw: 
     direction: incoming
     policy: deny
-- name: Allow all outgoing request 
+
+- name: ✅ Allowing all outgoing traffic
   ufw: 
     direction: outgoing
     policy: allow
-- name: Allow SSH port 
+
+- name: 🔓 Allowing SSH access on port {{ NEW_SSH_PORT }}
   ufw:
     rule: allow
     port: "{{ NEW_SSH_PORT }}"
     proto: tcp
 
+- name: ✅ Enabling UFW firewall
+  ufw: 
+    state: enabled
+
+- name: 🔁 Restarting SSH service to apply new configuration
+  block:
+    - name: ⏯️ Trying to restart sshd
+      systemd:
+        name: sshd
+        state: restarted
+      ignore_errors: true
+      register: sshd_result
+
+    - name: ⏯️ Trying to restart ssh if sshd failed
+      when: sshd_result is failed
+      systemd:
+        name: ssh
+        state: restarted
+
+- name: 🎉 System hardening complete!
+  debug:
+    msg: "✅ All hardening tasks completed successfully. Your system is now locked down and secure!"
